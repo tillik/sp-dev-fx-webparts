@@ -6,7 +6,7 @@ trigger:
 variables: 
   - group: spfx-pipeline-global-settings 
   - name: SPFx_SourceCodeBaseFolder 
-    value: src/webparts/contentQuery 
+    value: sp-dev-fx-webparts/samples/react-content-query-webpart/Onlinesrc/webparts/contentQuery 
   - name: DeployTo_M365_STAGING
     value: true 
 
