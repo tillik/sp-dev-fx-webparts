@@ -1,0 +1,78 @@
+trigger:
+  branches:
+    include:
+      - 'master'
+
+variables: 
+  - group: spfx-pipeline-global-settings 
+  - name: SPFx_SourceCodeBaseFolder 
+    value: src/webparts/contentQuery 
+  - name: DeployTo_M365_STAGING
+    value: true 
+
+stages:
+- stage: Build
+  dependsOn: []
+  jobs:
+  - job: run_build
+    displayName: Project build & package
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - task: NodeTool@0
+      displayName: Setup Node v10.x
+      inputs:
+        versionSpec: 10.x
+    - script: |
+        ls
+        cd $(SPFx_SourceCodeBaseFolder)
+        npm ci
+      displayName: Resolve project dependencies with NPM
+    - script: |
+        cd $(SPFx_SourceCodeBaseFolder)
+        npm audit --production
+      displayName: 'Run npm security audit for runtime dependencies'
+    - script: |
+        cd $(SPFx_SourceCodeBaseFolder)
+        gulp clean
+        gulp build --ship --no-revision
+      displayName: 'Build solution'
+    - script: |
+        cd $(SPFx_SourceCodeBaseFolder)
+        gulp test
+      displayName: 'Run tests'
+    - script: |
+        cd $(SPFx_SourceCodeBaseFolder)
+        gulp bundle --ship --no-revision
+      displayName: 'Bundle assets'      
+    - script: |
+        cd $(SPFx_SourceCodeBaseFolder)
+        gulp package-solution --ship --no-revision
+      displayName: 'Build solution package'      
+    - script: |
+        CMD_GET_SPPKG_NAME=$(find . -name '*.sppkg' -exec basename {} \;)
+        echo "##vso[task.setvariable variable=SpPkgFileName;isOutput=true]${CMD_GET_SPPKG_NAME}"
+      displayName: Get generated *.sppkg filename
+      name: GetSharePointPackage
+    - publish: $(Build.Repository.LocalPath)/$(SPFx_SourceCodeBaseFolder)/sharepoint/solution/$(GetSharePointPackage.SpPkgFileName)
+      displayName: Publish SharePoint package (*.sppkg)
+      artifact: spfx-package
+    - publish: $(Build.Repository.LocalPath)/$(SPFx_SourceCodeBaseFolder)/temp/deploy
+      displayName: Publish static assets
+      artifact: spfx-assets
+- stage: M365_STAGING
+  dependsOn:
+  - Build
+  condition: and(succeeded(), eq(variables['DeployTo_M365_STAGING'], 'true'), not(contains(variables['Build.SourceVersionMessage'], '[skip-cd]')))
+  jobs:
+    - template: azdevops/template-job-deploy-M365.yml
+      parameters:
+        name: M365_STAGING
+        displayName: Deploy to M365_STAGING in Microsoft 365
+        sp_tenantadmin_url: $(M365_STAGING_TenantAdminUrl)
+        sp_appcatalog_url: $(M365_STAGING_AppCatalog)
+        sp_asset_site_url: $(M365_STAGING_AssetDeploySiteUrl)
+        sp_asset_folder: $(M365_STAGING_AssetDeployFolder)
+        sp_user_login: $(M365_STAGING_AdminUserName)
+        sp_user_password: $(M365_STAGING_AdminPassword)
+

@@ -1,0 +1,63 @@
+parameters:
+  # unique name of the job
+  name: ''
+  # friendly name of the job
+  displayName: ''
+  # tenant admin url
+  sp_tenantadmin_url: ''
+  # app catalog url where the app package will be deployed
+  sp_appcatalog_url: ''
+  # asset deployment site
+  sp_asset_site_url: ''
+  # asset deployment folder
+  sp_asset_folder: ''
+  # o365 user credentials
+  sp_user_login: ''
+  sp_user_password: ''
+
+jobs:
+- deployment: ${{ parameters.name }}
+  displayName: ${{ parameters.displayName }}
+  pool:
+    vmImage: ubuntu-latest
+  environment: ${{ parameters.name }}
+  strategy:
+    runOnce:
+      deploy:
+        steps:
+        - download: current
+          displayName: Download SharePoint package (*.sppkg)
+          artifact: spfx-package
+        - download: current
+          displayName: Download assets
+          artifact: spfx-assets
+        - script: |
+            CMD_GET_SPPKG_NAME=$(find $(Pipeline.Workspace)/spfx-package -name '*.sppkg' -exec basename {} \;)
+            echo "##vso[task.setvariable variable=SpPkgFileName;isOutput=true]${CMD_GET_SPPKG_NAME}"
+          displayName: Get generated *.sppkg filename
+          name: GetSharePointPackage
+        - script: sudo npm install --global @pnp/office365-cli
+          displayName: Install Office 365 CLI
+        - script: sudo npm install jq
+          displayName: Install dependencies
+        - script: o365 login ${{ parameters.sp_tenantadmin_url }} --authType password --userName ${{ parameters.sp_user_login }} --password ${{ parameters.sp_user_password }}
+          displayName: Sign into Office 365
+        - script: |
+            existingAssets=$(o365 spo file list --webUrl ${{ parameters.sp_asset_site_url }} --folder ${{ parameters.sp_asset_folder }} -o json)
+            assetUrls=$(echo $existingAssets | jq -r '.[] | {ServerRelativeUrl} | .[]')
+            for url in $assetUrls; do
+              echo "removing file with id $url"
+              o365 spo file remove --webUrl ${{ parameters.sp_asset_site_url }} --url $url --confirm
+            done
+          displayName: Remove existing assets
+        - script: |
+            ls -Rl $(Pipeline.Workspace)
+            for filename in $(Pipeline.Workspace)/spfx-assets/*; do
+              echo "Uploading $filename to ${{ parameters.sp_asset_site_url }}/${{ parameters.sp_asset_folder }}"
+              o365 spo file add --webUrl ${{ parameters.sp_asset_site_url }} --folder ${{ parameters.sp_asset_folder }} --path $filename
+            done;
+          displayName: Copy assets to CDN folder
+        - script: o365 spo app add --filePath "$(Pipeline.Workspace)/spfx-package/$(GetSharePointPackage.SpPkgFileName)" --appCatalogUrl ${{ parameters.sp_appcatalog_url }} --scope tenant --overwrite
+          displayName: Upload SharePoint package to Site Collection App Catalog
+        - script: o365 spo app deploy --name $(GetSharePointPackage.SpPkgFileName) --appCatalogUrl ${{ parameters.sp_appcatalog_url }} --scope tenant
+          displayName: Deploy SharePoint package

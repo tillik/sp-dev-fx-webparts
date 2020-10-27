@@ -1,0 +1,38 @@
+parameters:
+  # unique name of the job
+  name: ''
+  # friendly name of the job
+  displayName: ''
+  # app catalog url where the app package will be deployed
+  sp_appcatalog_url: ''
+  # o365 user credentials
+  sp_user_login: ''
+  sp_user_password: ''
+
+jobs:
+- deployment: ${{ parameters.name }}
+  displayName: ${{ parameters.displayName }}
+  pool: 'SharePoint PHA'
+  environment: ${{ parameters.name }}
+  strategy:
+    runOnce:
+      deploy:
+        steps:
+        - download: current
+          displayName: Download SharePoint package (*.sppkg)
+          artifact: spfx-package
+        - powershell: |
+            Import-Module -Name SharePointPnPPowerShell2019
+          displayName: Install SharePoint 2019 PnP PowerShell
+        - powershell: |
+            $sec_password = ConvertTo-SecureString -String ${{ parameters.sp_user_password }} -AsPlainText -Force
+            $credential = New-Object System.Management.Automation.PSCredential ${{ parameters.sp_user_login }}, $sec_password
+            Write-Host -NoNewLine "Connecting to site ${{ parameters.sp_appcatalog_url }} as ${{ parameters.sp_user_login }}..."
+            Connect-PnPOnline -Url ${{ parameters.sp_appcatalog_url }} -Credentials $credential
+            Write-Host "done"
+            $packagePath = (Get-ChildItem ../spfx-package -Filter *.sppkg).FullName
+            Write-Host "Found package $packagePath"
+            Write-Host -NoNewline "Deploying package $packagePath to app catalog..."
+            Add-PnPApp -Path $packagePath -Scope Tenant -Overwrite -Publish
+            Write-Host "done"        
+          displayName: Upload SharePoint package to App Catalog
